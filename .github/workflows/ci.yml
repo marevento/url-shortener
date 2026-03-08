@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt bandit pip-audit
+
+      - name: Bandit (SAST)
+        run: bandit -r src/ -f json -o bandit-results.json || true
+
+      - name: Bandit report
+        run: |
+          bandit -r src/
+          echo "Bandit passed"
+
+      - name: pip-audit (dependency CVEs)
+        run: pip-audit -r requirements-dev.txt
+
+      - name: Tests
+        run: pytest tests/ -v
+        env:
+          BASE_URL: "https://${{ vars.CUSTOM_DOMAIN }}"
+
+  terraform-check:
+    name: Terraform Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform fmt
+        run: terraform fmt -check
+
+      - name: Terraform init
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Install tflint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: Run tflint
+        run: tflint --init && tflint
+
+      - name: Install tfsec
+        run: |
+          curl -sL https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 -o /usr/local/bin/tfsec
+          chmod +x /usr/local/bin/tfsec
+
+      - name: Run tfsec
+        run: tfsec . --soft-fail
+
+  terraform-plan:
+    name: Terraform Plan
+    if: github.event_name == 'pull_request'
+    needs: [lint-and-test, terraform-check]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          terraform plan -no-color \
+            -var="custom_domain=${{ vars.CUSTOM_DOMAIN }}" \
+            -var="environment=${{ vars.TF_ENVIRONMENT }}" \
+            -var="api_key=${{ secrets.API_KEY }}" \
+            -out=tfplan 2>&1 | tee plan-output.txt
+
+      - name: Post plan to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('infra/plan-output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n... (truncated)' : plan;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### Terraform Plan\n\`\`\`\n${truncated}\n\`\`\``
+            });

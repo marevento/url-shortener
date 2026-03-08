@@ -1,0 +1,8 @@
+# Development and testing dependencies
+pytest==9.0.2
+moto[dynamodb]==5.1.21
+boto3==1.42.63
+
+# Security scanning (CI)
+bandit==1.9.4
+pip-audit==2.10.0

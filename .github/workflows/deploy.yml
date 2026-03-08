@@ -1,0 +1,113 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Bandit (SAST)
+        run: bandit -r src/
+
+      - name: pip-audit (dependency CVEs)
+        run: pip-audit -r requirements-dev.txt
+
+      - name: Tests
+        run: pytest tests/ -v
+        env:
+          BASE_URL: "https://${{ vars.CUSTOM_DOMAIN }}"
+
+  terraform-check:
+    name: Terraform Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform fmt
+        run: terraform fmt -check
+
+      - name: Terraform init
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+  deploy:
+    name: Terraform Apply
+    needs: [lint-and-test, terraform-check]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9"
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform apply
+        run: |
+          terraform apply -auto-approve \
+            -var="custom_domain=${{ vars.CUSTOM_DOMAIN }}" \
+            -var="environment=${{ vars.TF_ENVIRONMENT }}" \
+            -var="api_key=${{ secrets.API_KEY }}"
+
+  smoke-test:
+    name: Smoke Test
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test redirect (404 for nonexistent code)
+        run: |
+          status=$(curl -sf -o /dev/null -w '%{http_code}' "https://${{ vars.CUSTOM_DOMAIN }}/stats/test" || true)
+          if [ "$status" = "404" ]; then
+            echo "API is live — got expected 404"
+          else
+            echo "Unexpected status: $status"
+            exit 1
+          fi
+
+      - name: Test POST auth (403 without API key)
+        run: |
+          status=$(curl -sf -o /dev/null -w '%{http_code}' -X POST "https://${{ vars.CUSTOM_DOMAIN }}/shorten" -H "Content-Type: application/json" -d '{}' || true)
+          if [ "$status" = "403" ]; then
+            echo "API key auth works — got expected 403"
+          else
+            echo "Unexpected status: $status"
+            exit 1
+          fi
