@@ -1,5 +1,5 @@
 # Development and testing dependencies
-pytest==9.0.2
+pytest==9.0.3
 moto[dynamodb]==5.1.21
 boto3==1.42.63
 
