@@ -7,7 +7,10 @@
 
 A serverless URL shortener built with AWS Lambda, DynamoDB, and Terraform.
 
-**Live demo available** — deployed with a custom domain via Route 53 subdomain delegation.
+**Live demo**: deployable with a custom domain via Route 53 subdomain delegation
+(see `infra/`).
+CI runs the full test/lint/security suite and a Terraform plan on every PR -
+see the badges and `.github/workflows/` for what that looks like in practice.
 
 ## Endpoints
 
