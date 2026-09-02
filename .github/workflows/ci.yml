@@ -76,7 +76,10 @@ jobs:
 
   terraform-plan:
     name: Terraform Plan
-    if: github.event_name == 'pull_request'
+    # Dependabot-triggered runs don't get repository secrets (GitHub withholds
+    # them by design), so this job can never succeed for a Dependabot PR - skip
+    # it there instead of leaving CI permanently red on every dependency bump.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     needs: [lint-and-test, terraform-check]
     runs-on: ubuntu-latest
     defaults:
