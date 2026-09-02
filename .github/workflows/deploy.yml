@@ -1,8 +1,9 @@
 name: Deploy
 
+# Manual only: the live infra is intentionally not running, so an automatic
+# deploy on every push to main (including Dependabot auto-merges) would just
+# fail Smoke Test against nothing every time. Trigger by hand when redeploying.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
