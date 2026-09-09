@@ -1,7 +1,7 @@
 # Development and testing dependencies
 pytest==9.1.1
 moto[dynamodb]==5.2.3
-boto3==1.43.83
+boto3==1.43.89
 
 # Security scanning (CI)
 bandit==1.9.4
